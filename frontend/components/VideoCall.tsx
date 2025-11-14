@@ -40,32 +40,74 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       console.log('Peer joined:', socketId);
     });
 
-    s.on('offer', async ({ sdp }) => {
-      console.log('Received offer');
+    s.on('offer', async ({ sdp, from }) => {
+      console.log('Received offer from:', from);
+      // Ignore if we sent this offer
+      if (from === s.id) {
+        console.log('Ignoring own offer');
+        return;
+      }
+      
       await ensurePeerConnection(s);
       const pc = pcRef.current!;
+      
+      // Check state before setting remote description
+      if (pc.signalingState !== 'stable') {
+        console.warn('Peer connection not in stable state, current state:', pc.signalingState);
+      }
+      
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      console.log('Set remote description (offer), state:', pc.signalingState);
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      console.log('Created and set local description (answer)');
       s.emit('answer', { roomId, sdp: answer });
     });
 
-    s.on('answer', async ({ sdp }) => {
-      console.log('Received answer');
+    s.on('answer', async ({ sdp, from }) => {
+      console.log('Received answer from:', from);
+      // Ignore if we sent this answer
+      if (from === s.id) {
+        console.log('Ignoring own answer');
+        return;
+      }
+      
       const pc = pcRef.current;
-      if (!pc) return;
+      if (!pc) {
+        console.warn('No peer connection when answer received');
+        return;
+      }
+      
+      // Only set remote description if we're expecting an answer
+      if (pc.signalingState !== 'have-local-offer') {
+        console.warn('Not expecting answer, current state:', pc.signalingState);
+        return;
+      }
+      
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      console.log('Set remote description (answer), state:', pc.signalingState);
     });
 
-    s.on('ice-candidate', async ({ candidate }) => {
+    s.on('ice-candidate', async ({ candidate, from }) => {
+      // Ignore if we sent this candidate
+      if (from === s.id) {
+        return;
+      }
+      
       const pc = pcRef.current;
       if (!pc || !candidate) return;
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        console.log('Added ICE candidate');
-      } catch (e) {
-        console.error('Error add ICE', e);
+      
+      // Only add ICE candidates after remote description is set
+      if (pc.remoteDescription) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log('Added ICE candidate from:', from);
+        } catch (e) {
+          console.error('Error add ICE', e);
+        }
+      } else {
+        console.warn('Received ICE candidate before remote description');
       }
     });
 
@@ -101,6 +143,10 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
       }
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.log('Signaling state changed:', pc.signalingState);
     };
 
     pc.oniceconnectionstatechange = () => {
