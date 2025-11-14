@@ -10,11 +10,11 @@ const iceConfig: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     // TURN server
-    // {
-    //   urls: process.env.NEXT_PUBLIC_TURN_URL || 'turn:your-turn-server.com:3478',
-    //   username: process.env.NEXT_PUBLIC_TURN_USERNAME,
-    //   credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL,
-    // },
+    {
+      urls: process.env.NEXT_PUBLIC_TURN_URL || 'turn:your-turn-server.com:3478',
+      username: process.env.NEXT_PUBLIC_TURN_USERNAME,
+      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL,
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -523,14 +523,14 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       )}
 
       {/* Bottom Controls Bar */}
-      <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/80 via-black/60 to-transparent pt-20 pb-8">
+      <div className="absolute bottom-0 left-0 right-0 z-20 pt-20 pb-8">
         <div className="flex justify-center items-center gap-4">
           {/* Toggle Video Button */}
           <button
             onClick={toggleVideo}
             className={`w-14 h-14 rounded-full font-semibold transition-all shadow-lg flex items-center justify-center ${
               isVideoEnabled
-                ? 'bg-white/20 hover:bg-white/30 backdrop-blur-md text-white'
+                ? 'bg-white/40 hover:bg-white/30 backdrop-blur-md text-white'
                 : 'bg-red-600 hover:bg-red-700 text-white'
             }`}
             title={isVideoEnabled ? 'Turn off camera' : 'Turn on camera'}
@@ -560,7 +560,7 @@ export default function VideoCall({ roomId }: { roomId: string }) {
             onClick={toggleAudio}
             className={`w-14 h-14 rounded-full font-semibold transition-all shadow-lg flex items-center justify-center ${
               isAudioEnabled
-                ? 'bg-white/20 hover:bg-white/30 backdrop-blur-md text-white'
+                ? 'bg-white/40 hover:bg-white/30 backdrop-blur-md text-white'
                 : 'bg-red-600 hover:bg-red-700 text-white'
             }`}
             title={isAudioEnabled ? 'Mute microphone' : 'Unmute microphone'}
