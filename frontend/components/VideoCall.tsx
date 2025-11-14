@@ -11,9 +11,9 @@ const iceConfig: RTCConfiguration = {
     { urls: 'stun:stun1.l.google.com:19302' },
     // TURN server
     {
-      urls: process.env.NEXT_PUBLIC_TURN_URL || 'turn:your-turn-server.com:3478',
-      username: process.env.NEXT_PUBLIC_TURN_USERNAME,
-      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL,
+      urls: process.env.NEXT_PUBLIC_TURN_URL || 'turn:webrtc.incom.id:3478?transport=udp',
+      username: process.env.NEXT_PUBLIC_TURN_USERNAME || 'webrtcuser',
+      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || 'Password123',
     },
   ],
   iceCandidatePoolSize: 10,
