@@ -54,8 +54,8 @@ Frontend akan berjalan di `http://localhost:3000`
 
 1. Buka browser dan akses `http://localhost:3000`
 2. Masukkan Room ID atau klik "Generate Random Room" untuk membuat room baru
-3. Bagikan Room ID tersebut dengan teman Anda
-4. Buka browser/tab baru (atau minta teman Anda membuka) dengan Room ID yang sama
+3. Bagikan Room ID tersebut dengan user lain
+4. Buka browser/tab baru (atau minta user lain membuka) dengan Room ID yang sama
 5. Klik "Start Call" di salah satu browser untuk memulai panggilan
 6. Browser lain akan otomatis menerima panggilan
 7. Video akan muncul di kedua sisi setelah koneksi berhasil

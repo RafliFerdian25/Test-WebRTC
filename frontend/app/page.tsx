@@ -20,6 +20,10 @@ export default function Home() {
   } | null>(null);
   const router = useRouter();
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+  const callTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const incomingCallTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeOutCall = 60000; // 60 seconds
 
   // Setup audio ringtone
   useEffect(() => {
@@ -45,6 +49,15 @@ export default function Home() {
     }
   }, [isCalling, incomingCall]);
 
+  // Load user code from localStorage on mount
+  useEffect(() => {
+    const storedUserCode = localStorage.getItem('webrtc-user-code');
+    if (storedUserCode) {
+      console.log('Loaded user code from localStorage:', storedUserCode);
+      setUserCode(storedUserCode);
+    }
+  }, []);
+
   useEffect(() => {
     const s = io(SIGNALING_URL);
     setSocket(s);
@@ -52,8 +65,18 @@ export default function Home() {
     s.on('connect', () => {
       console.log('Connected to server');
       setIsConnected(true);
-      // Register user dan dapatkan user code
-      s.emit('register-user');
+      
+      // Cek apakah sudah ada user code di localStorage
+      const storedUserCode = localStorage.getItem('webrtc-user-code');
+      if (storedUserCode) {
+        console.log('Reusing stored user code:', storedUserCode);
+        // Register dengan user code yang sudah ada
+        s.emit('register-user', { userCode: storedUserCode });
+      } else {
+        // Generate user code baru
+        console.log('Requesting new user code');
+        s.emit('register-user');
+      }
     });
 
     s.on('disconnect', () => {
@@ -64,6 +87,9 @@ export default function Home() {
     s.on('user-registered', ({ userCode }: { userCode: string }) => {
       console.log('User code received:', userCode);
       setUserCode(userCode);
+      // Simpan ke localStorage
+      localStorage.setItem('webrtc-user-code', userCode);
+      console.log('User code saved to localStorage');
     });
 
     s.on('call-initiated', ({ roomId }: { roomId: string }) => {
@@ -71,11 +97,38 @@ export default function Home() {
       setIsCalling(true);
       // Simpan roomId untuk nanti
       sessionStorage.setItem('pendingRoomId', roomId);
+      
+      // Set timeout 60 detik, jika tidak diterima otomatis batalkan
+      callTimeoutRef.current = setTimeout(() => {
+        console.log('Call timeout - no response after 60 seconds');
+        setIsCalling(false);
+        
+        // Emit cancel-call ke server
+        if (s && targetUserCode) {
+          s.emit('cancel-call', { targetUserCode });
+        }
+        
+        // Stop ringtone
+        ringtoneRef.current?.pause();
+        if (ringtoneRef.current) {
+          ringtoneRef.current.currentTime = 0;
+        }
+        
+        alert('Panggilan tidak dijawab (timeout 60 detik)');
+        setTargetUserCode('');
+      }, timeOutCall); // 60 seconds
     });
 
     s.on('call-accepted', ({ roomId }: { roomId: string }) => {
       console.log('Call accepted! Redirecting to room:', roomId);
       setIsCalling(false);
+      
+      // Clear timeout karena call sudah diterima
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
+      
       // Mark as caller for auto-start
       sessionStorage.setItem('wasCaller', 'true');
       router.push(`/call/${roomId}`);
@@ -84,17 +137,44 @@ export default function Home() {
     s.on('call-rejected', () => {
       console.log('Call rejected');
       setIsCalling(false);
+      
+      // Clear timeout karena call sudah ditolak
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
+      
       alert('Panggilan ditolak oleh user');
     });
 
     s.on('incoming-call', (data: { from: string; callerName: string; roomId: string; callerSocketId: string }) => {
       console.log('Incoming call from:', data.from);
       setIncomingCall(data);
+      
+      // Set timeout 60 detik untuk incoming call
+      incomingCallTimeoutRef.current = setTimeout(() => {
+        console.log('Incoming call timeout - no response after 60 seconds');
+        setIncomingCall(null);
+        
+        // Stop ringtone
+        ringtoneRef.current?.pause();
+        if (ringtoneRef.current) {
+          ringtoneRef.current.currentTime = 0;
+        }
+        
+        console.log('Incoming call modal closed due to timeout');
+      }, timeOutCall); // 60 seconds
     });
 
     s.on('call-cancelled', () => {
       console.log('Call cancelled');
       setIncomingCall(null);
+      
+      // Clear incoming call timeout
+      if (incomingCallTimeoutRef.current) {
+        clearTimeout(incomingCallTimeoutRef.current);
+        incomingCallTimeoutRef.current = null;
+      }
     });
 
     s.on('call-error', ({ message }: { message: string }) => {
@@ -127,6 +207,12 @@ export default function Home() {
   const handleAcceptCall = () => {
     if (!incomingCall || !socket) return;
     
+    // Clear incoming call timeout
+    if (incomingCallTimeoutRef.current) {
+      clearTimeout(incomingCallTimeoutRef.current);
+      incomingCallTimeoutRef.current = null;
+    }
+    
     // Stop ringtone
     ringtoneRef.current?.pause();
     if (ringtoneRef.current) {
@@ -146,6 +232,12 @@ export default function Home() {
   const handleRejectCall = () => {
     if (!incomingCall || !socket) return;
     
+    // Clear incoming call timeout
+    if (incomingCallTimeoutRef.current) {
+      clearTimeout(incomingCallTimeoutRef.current);
+      incomingCallTimeoutRef.current = null;
+    }
+    
     // Stop ringtone
     ringtoneRef.current?.pause();
     if (ringtoneRef.current) {
@@ -163,6 +255,12 @@ export default function Home() {
   const handleCancelCall = () => {
     if (!socket || !targetUserCode) return;
     
+    // Clear timeout
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+    }
+    
     // Stop ringtone
     ringtoneRef.current?.pause();
     if (ringtoneRef.current) {
@@ -176,6 +274,8 @@ export default function Home() {
 
   const copyUserCode = () => {
     navigator.clipboard.writeText(userCode);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
   };
 
   return (
@@ -199,15 +299,24 @@ export default function Home() {
 
           {/* User Code Display */}
           {userCode && (
-            <div className="mb-6 p-4 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg">
+            <div className="mb-6 p-4 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg relative">
               <p className="text-white text-sm mb-1">Your User Code:</p>
               <div className="flex items-center justify-between">
                 <span className="text-3xl font-bold text-white tracking-wider">{userCode}</span>
                 <button
                   onClick={copyUserCode}
-                  className="px-3 py-1 bg-white text-blue-600 rounded text-sm font-semibold hover:bg-blue-50 transition"
+                  className="px-3 py-1 bg-white text-blue-600 rounded text-sm font-semibold hover:bg-blue-50 transition relative"
                 >
-                  Copy
+                  {isCopied ? (
+                    <>
+                      <svg className="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    'Copy'
+                  )}
                 </button>
               </div>
               <p className="text-blue-100 text-xs mt-2">Bagikan kode ini untuk menerima panggilan</p>
@@ -225,7 +334,7 @@ export default function Home() {
                 type="text"
                 value={targetUserCode}
                 onChange={(e) => setTargetUserCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="Masukkan 6 digit user code"
+                placeholder="User Code"
                 maxLength={6}
                 disabled={isCalling}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-gray-800 text-center text-2xl tracking-widest font-bold disabled:bg-gray-100"
@@ -260,9 +369,9 @@ export default function Home() {
           <div className="mt-8 p-4 bg-blue-50 rounded-lg">
             <h3 className="font-semibold text-blue-900 mb-2">📞 Cara Menggunakan:</h3>
             <ul className="text-sm text-blue-800 space-y-1">
-              <li>• Bagikan <strong>User Code</strong> Anda ke teman</li>
-              <li>• Masukkan User Code teman untuk memanggil</li>
-              <li>• Tunggu teman menerima panggilan</li>
+              <li>• Bagikan <strong>User Code</strong> Anda ke pengguna lain</li>
+              <li>• Masukkan User Code pengguna lain untuk memanggil</li>
+              <li>• Tunggu pengguna lain menerima panggilan</li>
               <li>• Pastikan kamera dan mikrofon diizinkan</li>
             </ul>
           </div>

@@ -36,9 +36,35 @@ export class CallGateway implements OnGatewayDisconnect {
   }
 
   @SubscribeMessage('register-user')
-  handleRegisterUser(@ConnectedSocket() client: Socket) {
-    // Generate user code untuk client ini
-    const userCode = this.generateUserCode();
+  handleRegisterUser(
+    @MessageBody() data: { userCode?: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    let userCode: string;
+    
+    // Jika client mengirim userCode (dari localStorage), coba gunakan itu
+    if (data?.userCode) {
+      // Cek apakah userCode sudah dipakai socket lain
+      const existingSocketId = this.userCodeToSocket.get(data.userCode);
+      
+      if (existingSocketId && existingSocketId !== client.id) {
+        // UserCode sudah dipakai oleh socket lain, generate yang baru
+        console.log(`User code ${data.userCode} already in use by ${existingSocketId}, generating new one`);
+        userCode = this.generateUserCode();
+      } else if (existingSocketId === client.id) {
+        // Socket ini sudah registered dengan userCode ini, tidak perlu apa-apa
+        console.log(`Socket ${client.id} already registered with ${data.userCode}`);
+        return { userCode: data.userCode };
+      } else {
+        // UserCode available, gunakan
+        userCode = data.userCode;
+        console.log(`Reusing user code: ${userCode}`);
+      }
+    } else {
+      // Generate user code baru
+      userCode = this.generateUserCode();
+    }
+    
     this.userCodeToSocket.set(userCode, client.id);
     this.socketToUserCode.set(client.id, userCode);
     
@@ -188,6 +214,19 @@ export class CallGateway implements OnGatewayDisconnect {
     client.to(data.roomId).emit('ice-candidate', {
       candidate: data.candidate,
       from: client.id,
+    });
+  }
+
+  @SubscribeMessage('mute-status')
+  handleMuteStatus(
+    @MessageBody() data: { roomId: string; isAudioEnabled: boolean },
+    @ConnectedSocket() client: Socket,
+  ) {
+    console.log(`Mute status from ${client.id}: audio ${data.isAudioEnabled ? 'enabled' : 'disabled'}`);
+    // Broadcast status ke semua peer di room
+    client.to(data.roomId).emit('peer-mute-status', {
+      socketId: client.id,
+      isAudioEnabled: data.isAudioEnabled,
     });
   }
 

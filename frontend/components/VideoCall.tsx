@@ -26,11 +26,14 @@ export default function VideoCall({ roomId }: { roomId: string }) {
   const [isReceiver, setIsReceiver] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
+  const [isRemoteAudioEnabled, setIsRemoteAudioEnabled] = useState(true);
+  const [callDuration, setCallDuration] = useState(0); // in seconds
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const pendingIceCandidatesRef = useRef<RTCIceCandidate[]>([]); // Buffer untuk ICE candidates
+  const callTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const s = io(SIGNALING_URL);
@@ -79,6 +82,11 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       setIsConnected(false);
     });
 
+    s.on('peer-mute-status', ({ socketId, isAudioEnabled }: { socketId: string; isAudioEnabled: boolean }) => {
+      console.log(`Peer ${socketId} audio status: ${isAudioEnabled ? 'enabled' : 'muted'}`);
+      setIsRemoteAudioEnabled(isAudioEnabled);
+    });
+
     s.on('peer-joined', async ({ socketId }) => {
       console.log('Peer joined:', socketId);
       
@@ -101,6 +109,16 @@ export default function VideoCall({ roomId }: { roomId: string }) {
             const pc = pcRef.current;
             if (pc && pc.signalingState === 'stable') {
               setIsCalling(true);
+              
+              // Start call timer untuk caller
+              setCallDuration(0);
+              if (callTimerRef.current) {
+                clearInterval(callTimerRef.current);
+              }
+              callTimerRef.current = setInterval(() => {
+                setCallDuration(prev => prev + 1);
+              }, 1000);
+              
               const offer = await pc.createOffer();
               await pc.setLocalDescription(offer);
               s.emit('offer', { roomId, sdp: offer });
@@ -131,6 +149,15 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       setIsReceiver(true);
       setIsCalling(true);
       console.log('Receiver: starting call automatically');
+      
+      // Start call timer
+      setCallDuration(0);
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+      }
+      callTimerRef.current = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
       
       // Clear buffer ICE candidates untuk koneksi baru
       pendingIceCandidatesRef.current = [];
@@ -230,26 +257,33 @@ export default function VideoCall({ roomId }: { roomId: string }) {
     });
 
     s.on('peer-left', ({ socketId }) => {
-      console.log('Peer left:', socketId);
+      console.log('Peer left:', socketId, '- ending call and redirecting...');
       
-      // Clean up peer connection and remote video
-      if (pcRef.current) {
-        pcRef.current.close();
-        pcRef.current = null;
+      // Stop timer
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+        callTimerRef.current = null;
       }
       
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-      }
+      // Cleanup peer connection and streams
+      pcRef.current?.close();
+      pcRef.current = null;
+      localStreamRef.current?.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
       
-      setIsCalling(false);
-      setIsReceiver(false);
-      
-      console.log('Peer connection closed, ready for new connection');
+      // Redirect ke home
+      window.location.href = '/';
     });
 
     s.on('call-ended', () => {
       console.log('Call ended by peer, redirecting to home...');
+      
+      // Stop timer
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+        callTimerRef.current = null;
+      }
+      
       // Cleanup
       pcRef.current?.close();
       pcRef.current = null;
@@ -264,6 +298,9 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       pcRef.current?.close();
       pcRef.current = null;
       localStreamRef.current?.getTracks().forEach(t => t.stop());
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+      }
     };
   }, [roomId]);
 
@@ -340,6 +377,16 @@ export default function VideoCall({ roomId }: { roomId: string }) {
     }
     try {
       setIsCalling(true);
+      
+      // Start call timer
+      setCallDuration(0);
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+      }
+      callTimerRef.current = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
+      
       await ensurePeerConnection(socket);
       const pc = pcRef.current!;
       const offer = await pc.createOffer();
@@ -349,6 +396,10 @@ export default function VideoCall({ roomId }: { roomId: string }) {
     } catch (error) {
       console.error('Error starting call:', error);
       setIsCalling(false);
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+        callTimerRef.current = null;
+      }
     }
   };
 
@@ -362,6 +413,12 @@ export default function VideoCall({ roomId }: { roomId: string }) {
   };
 
   const endCallAndExit = () => {
+    // Stop timer
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+    
     // Emit event ke server untuk notify peer lain
     if (socket) {
       socket.emit('end-call', { roomId });
@@ -395,7 +452,16 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
-        console.log('Audio', audioTrack.enabled ? 'enabled' : 'disabled');
+        console.log('Audio toggled:', audioTrack.enabled);
+        
+        // Kirim status mute ke remote peer melalui signaling
+        if (socket) {
+          socket.emit('mute-status', {
+            roomId,
+            isAudioEnabled: audioTrack.enabled,
+          });
+          console.log('Sent mute status to peers:', audioTrack.enabled);
+        }
       }
     }
   };
@@ -410,6 +476,20 @@ export default function VideoCall({ roomId }: { roomId: string }) {
           playsInline 
           className="w-full h-full object-cover"
         />
+        
+        {/* Remote Mute Indicator */}
+        {!isRemoteAudioEnabled && (
+          <div className="absolute top-20 left-1/2 transform -translate-x-1/2 bg-red-500/90 backdrop-blur-md px-6 py-3 rounded-full shadow-2xl z-10">
+            <div className="flex items-center gap-3">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                <line x1="18" y1="9" x2="22" y2="13" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+                <line x1="22" y1="9" x2="18" y2="13" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+              </svg>
+              <span className="text-white font-semibold text-sm">Peer is muted</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Local Video (Picture in Picture - Top Right) */}
@@ -430,6 +510,17 @@ export default function VideoCall({ roomId }: { roomId: string }) {
           {isConnected ? 'Connected' : 'Disconnected'}
         </div>
       </div>
+
+      {/* Call Duration Timer */}
+      {isCalling && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
+          <div className="bg-white/10 backdrop-blur-sm px-3 py-1 rounded-full border border-white/20">
+            <span className="text-white font-mono text-sm tracking-wide">
+              {Math.floor(callDuration / 60).toString().padStart(2, '0')}:{(callDuration % 60).toString().padStart(2, '0')}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Bottom Controls Bar */}
       <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/80 via-black/60 to-transparent pt-20 pb-8">
