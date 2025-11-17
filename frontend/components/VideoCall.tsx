@@ -419,6 +419,9 @@ export default function VideoCall({ roomId }: { roomId: string }) {
       callTimerRef.current = null;
     }
     
+    // Save call duration to sessionStorage for logging
+    sessionStorage.setItem('lastCallDuration', callDuration.toString());
+    
     // Emit event ke server untuk notify peer lain
     if (socket) {
       socket.emit('end-call', { roomId });
